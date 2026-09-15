@@ -8,11 +8,15 @@ import requests
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 CHAT_ID = os.getenv("CHAT_ID")
 
+# تنظیم دقیق تگ با یک عدد @
 env_tag = os.getenv("CHANNEL_TAG")
 if not env_tag or env_tag.strip().lower() in ["none", "null", ""]:
-    CHANNEL_TAG = "👉🆔@@Goodbaye_filtering📡"
+    CHANNEL_TAG = "👉🆔@Goodbaye_filtering📡"
 else:
     CHANNEL_TAG = env_tag.strip()
+
+# جلوگیری هوشمند از ایجاد دو عدد @@ پشت سر هم
+CHANNEL_TAG = re.sub(r'@+', '@', CHANNEL_TAG)
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -30,18 +34,30 @@ def decode_base64_safely(data: str) -> str:
         return ""
 
 def clean_old_remark(old_tag: str) -> str:
-    """حذف آیدی و تبلیغ کانال‌های قبلی و نگه‌داشتن پرچم، نام کشور و پینگ"""
+    """حذف آیدی‌ها، سایت‌ها، تبلیغات متفرقه و نگه‌داشتن پرچم، نام کشور و پینگ"""
     if not old_tag or old_tag.lower() in ["none", "null", ""]:
         return ""
     
-    # حذف تگ‌هایی شبیه 👉🆔@channel📡
-    t = re.sub(r'👉\s*🆔\s*@+[\w\d_\.-]+\s*📡?', '', old_tag)
-    # حذف تمام آیدی‌های تلگرامی (@channel)
-    t = re.sub(r'@+[\w\d_\.-]+', '', t)
-    # حذف لینک‌های تلگرام
+    t = old_tag
+
+    # ۱. حذف آدرس وب‌سایت‌ها و دامنه‌ها (مثل [openproxylist.com] یا site.ir)
+    t = re.sub(r'https?://\S+', '', t)
     t = re.sub(r'(?:https?:\/\/)?t\.me\/[\w\d_\.-]+', '', t, flags=re.IGNORECASE)
-    # پاک کردن کاراکترهای جداکننده اضافی از ابتدا
-    t = re.sub(r'^[|\-—\s:]+', '', t).strip()
+    t = re.sub(r'\[?[\w\d_\.-]+\.(?:com|net|org|ir|io|me|info|site|xyz|life|app|ru|co|top)\]?', '', t, flags=re.IGNORECASE)
+
+    # ۲. حذف الگوهای آیدی تلگرام مثل 👉🆔@channel📡 یا @channel
+    t = re.sub(r'👉\s*🆔\s*@+[\w\d_\.-]+\s*📡?', '', t)
+    t = re.sub(r'@+[\w\d_\.-]+', '', t)
+
+    # ۳. حذف نوشته‌های نام پروتکل اضافی مثل vless-US یا vmess-DE
+    t = re.sub(r'\b(?:vless|vmess|trojan|ss|ssr|hysteria\d?)[-_ ]*[a-zA-Z0-9]*\b', '', t, flags=re.IGNORECASE)
+
+    # ۴. پاک‌سازی براکت‌های خالی باقی‌مانده [] ()
+    t = re.sub(r'[\[\]\(\)\{\}]', ' ', t)
+
+    # ۵. پاک‌سازی خط فاصله و کاراکترهای اضافه از ابتدا و انتهای متن
+    t = re.sub(r'^[|\-—_:,\s]+', '', t).strip()
+    t = re.sub(r'[|\-—_:,\s]+$', '', t).strip()
     return t
 
 def fetch_source_configs(url: str) -> list:
@@ -84,6 +100,7 @@ def filter_and_deduplicate(raw_configs: list) -> list:
             parts = cfg.split("#", 1)
             clean_url = parts[0].strip()
 
+            # پاک‌سازی اطلاعات قبلی و نگه‌داشتن کشور و پینگ
             old_tag = ""
             if len(parts) > 1:
                 decoded_old = urllib.parse.unquote(parts[1]).strip()
@@ -96,7 +113,6 @@ def filter_and_deduplicate(raw_configs: list) -> list:
             transport_type = queries.get("type", [""])[0].lower()
             flow = queries.get("flow", [""])[0].lower()
 
-            # شرط پذیرش: حتماً Reality باشد و (یا gRPC باشد یا TCP Vision)
             is_grpc = (transport_type == "grpc")
             is_vision = ("xtls-rprx-vision" in flow)
 
@@ -106,7 +122,6 @@ def filter_and_deduplicate(raw_configs: list) -> list:
                 sni = queries.get("sni", [""])[0].lower()
                 pbk = queries.get("pbk", [""])[0]
 
-                # ساخت کلید یکتا برای حذف دقیق تکراری‌ها
                 unique_key = f"{server_host}:{server_port}-{sni}-{pbk}-{transport_type}-{flow}"
 
                 if unique_key not in unique_fingerprints:
@@ -157,7 +172,7 @@ def send_file_only_to_telegram(configs: list):
                 files={"document": (file_name, doc, "text/plain")},
                 timeout=30
             )
-        print("[OK] Combined VIP file sent successfully to Telegram.")
+        print("[OK] Cleaned VIP file sent successfully to Telegram.")
     except Exception as e:
         print(f"[FAIL] Sending document failed: {e}")
 
@@ -176,7 +191,7 @@ def main():
         all_raw_configs.extend(configs)
 
     final_configs = filter_and_deduplicate(all_raw_configs)
-    print(f"Total Unique Reality (gRPC + Vision) configs: {len(final_configs)}")
+    print(f"Total Unique Cleaned Reality configs: {len(final_configs)}")
 
     send_file_only_to_telegram(final_configs)
 
